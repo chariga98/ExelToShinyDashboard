@@ -41,8 +41,8 @@ library(rsconnect)
 #########################################################################################################################################################################################
 # Set credentials and URL
 
-username <- "ae_hub_ea"
-password <- "masenomathscamp"
+username <- "your_Kobocollect_user_name"
+password <- "Your_kobocollect_password"
 api_url <- "https://kc.kobotoolbox.org/api/v1/data"
 
 # Make the request
