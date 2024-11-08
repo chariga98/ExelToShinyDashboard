@@ -1,0 +1,211 @@
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+#########################################################################################################################################
+##Install packages
+#################################################################################################################################################
+install.packages("dplyr") 
+install.packages("jsonlite")  
+install.packages("shiny") 
+install.packages("readxl") 
+install.packages("devtools")
+install.packages('rsconnect')
+install.packages("glue")
+install.packages("stringdist")
+devtools::install_github("IDEMSInternational/ExcelToShiny") 
+ExcelToShiny::: create_box_ODK
+ExcelToShiny:::create_box_ODK
+####################################################################################################################################################################
+##load libraries
+############################################################################################################################################################
+library(rio) 
+library(ExcelToShiny)
+library(readxl)
+library(here)
+library(shiny)
+library(shinydashboard)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(httr)      
+library(jsonlite) 
+library(glue)
+library(stringdist)
+library(rsconnect)
+####################################################################################################################################################################################################
+
+
+
+
+#######################################################################################################################################################################################################
+## Connect to Kobocollect account
+#########################################################################################################################################################################################
+# Set credentials and URL
+
+username <- "ae_hub_ea"
+password <- "masenomathscamp"
+api_url <- "https://kc.kobotoolbox.org/api/v1/data"
+
+# Make the request
+response <- GET(api_url, authenticate(username, password))
+
+# Parse the response
+forms <- content(response, "parsed")
+
+# Extract form names
+form_names <- sapply(forms, function(x) x$title)
+
+
+# 1. Retrieve data for "Dairy data collection _ Income &amp; Expenses"
+
+form_name_1 <- "Dairy data collection _ Income &amp; Expenses"
+form_id_1 <- forms[[which(sapply(forms, function(x) x$title == form_name_1))]]$id
+form_data_response_1 <- GET(paste0(api_url, "/", form_id_1), authenticate(username, password))
+
+if (status_code(form_data_response_1) == 200) {
+  form_data_1 <- content(form_data_response_1, "text")
+  dairy_income_expense <- fromJSON(form_data_1, flatten = TRUE)
+ 
+} else {
+  print(paste("Failed to retrieve data for form:", form_name_1))
+}
+
+
+
+###########################
+##Data cleaning: df1
+###########################
+# Drop unnecessary columns from the dataset
+income_expese_data <- dairy_income_expense %>%
+  select(-c('_id', 'formhub/uuid', 'starttime', 'endtime', '__version__',
+            'meta/instanceID', '_xform_id_string', '_uuid', '_attachments', '_status',
+            '_geolocation', '_submission_time', '_tags', '_submitted_by','_notes'))
+
+
+income_expese_data<-income_expese_data %>%
+  rename(
+    'date'='today',
+    'data_collector'='datacollector',
+    'time_of_the_day'='time',
+    'expense_payment_evidence'='payment_evidence'
+  )
+#colnames(income_expese_data)
+# Define pairs of columns to merge
+columns_to_merge <- list(
+  data_collector = "other_datacollector",
+  expense_category = "other_expense_category",
+  customer = "other_customer",
+  commodity_sold = "other_commodity_sold",
+  expense_payment_evidence = "other_payment_evidence"                     #filter_box	date	label = "Choose a Date:", value = Sys.Date(), max = Sys.Date()	date																							   
+)
+
+# Loop through each pair of columns and merge
+for (col in names(columns_to_merge)) {
+  other_col <- columns_to_merge[[col]]
+  
+  income_expese_data <- income_expese_data %>%
+    mutate(!!col := ifelse(!is.na(.data[[other_col]]) & .data[[other_col]] != "",
+                           .data[[other_col]],
+                           .data[[col]])) %>%
+    select(-all_of(other_col))  # Drop the 'other' column
+}
+
+
+
+
+# Convert income_amount  and expense_cost columns to numeric, replacing non-numeric values with NA
+income_expese_data <- income_expese_data %>%
+ mutate(
+   income_amount = as.numeric(income_amount),
+   expense_cost = as.numeric(expense_cost)
+  )
+income_expese_data <- income_expese_data %>%
+  mutate(across(c(customer, commodity_sold, expense_category), as.factor))
+
+# Create a new date column with the desired format and a separate month column
+income_expese_data <- income_expese_data %>%
+   mutate(
+     date = as.Date(date),  # Convert to Date format if necessary
+     formatted_date = format(date, "%d %B %Y"),  # Format date as "01 October 2024"
+     month = factor(month(date, label = TRUE, abbr = FALSE), levels = month.name)  # Full month names
+   ) %>%
+  # Split the formatted_date into separate day, month, and year columns
+  separate(formatted_date, into = c("day", "month_name", "year"), sep = " ", convert = TRUE)
+
+
+
+###########################################################################################################################
+## df2<-milk_animal_health_df ## Retrieving data from MHAC Milk and Animal health data Kobocollect form
+################################################################################################################################
+
+# 2. Retrieve data for "MHAC Milk and Animal health data"
+form_name_2 <- "MHAC Milk and Animal health data"
+form_id_2 <- forms[[which(sapply(forms, function(x) x$title == form_name_2))]]$id
+form_data_response_2 <- GET(paste0(api_url, "/", form_id_2), authenticate(username, password))
+
+if (status_code(form_data_response_2) == 200) {
+  form_data_2 <- content(form_data_response_2, "text")
+  milk_animal_health_df <- fromJSON(form_data_2, flatten = TRUE)
+  
+} else {
+  print(paste("Failed to retrieve data for form:", form_name_2))
+}
+
+
+
+milk_animal_health_df <- milk_animal_health_df %>%
+  select(-c('_id', 'formhub/uuid', 'starttime', 'endtime', '__version__',
+            'meta/instanceID', '_xform_id_string', '_uuid', '_attachments', '_status',
+            '_geolocation', '_submission_time', '_tags', '_submitted_by','_notes'))
+
+
+
+ milk_animal_health_df <- milk_animal_health_df %>%
+   mutate(
+     today = as.Date(today),  # Ensure "today" is in Date format
+     formatted_date = format(today, "%d %B %Y"),  # Format date as "01 October 2024"
+     month = factor(month(today, label = TRUE, abbr = FALSE), levels = month.name)  # Extract and label the month
+   ) %>%
+  # Split the formatted_date into separate day, month_name, and year columns
+   separate(formatted_date, into = c("day", "month_name", "year"), sep = " ", convert = TRUE)
+
+# Ensure the milk production column is numeric
+milk_animal_health_df <- milk_animal_health_df %>%
+  mutate(milk_produce_by_individual_cow = as.numeric(milk_produce_by_individual_cow))
+# Update milk_amount_customer_received with values from milk_amount_staff_received where applicable
+
+milk_animal_health_df <- milk_animal_health_df %>%
+  mutate(
+    milk_amount_customer_received = ifelse(is.na(milk_amount_customer_received) & !is.na(milk_amount_staff_received), 
+                                           milk_amount_staff_received, 
+                                           milk_amount_customer_received)
+  )
+#Convert milk_amount_customer_received to numeric 
+milk_animal_health_df <- milk_animal_health_df %>%
+  mutate(milk_amount_customer_received = as.numeric(milk_amount_customer_received))
+
+# Convert milk_amount_staff_received to numeric, forcing non-numeric to NA
+milk_animal_health_df <- milk_animal_health_df %>%
+  mutate(milk_amount_staff_received = as.numeric(as.character(milk_amount_staff_received)))
+
+
+
+######################################################################################################################################################################################################
+### Importing excel sheet and calling the data sets
+###############################################################################################################################################################################################################
+MHAC_excel <- import_list(here::here("./Excel_livestock_dept (5).xlsx"))
+
+
+#MHAC_excel$expenses$data <- NULL
+df1 <- income_expese_data
+df2 <- milk_animal_health_df
+df1$key <- 1:nrow(df1)
+df2$key <- 1:nrow(df2)
+
+# Create the Shiny dashboard using the Excel file
+build_shiny(title = "LIVESTOCK DEPARTMENT",
+            data_list = MHAC_excel,
+            data_frame = df1,
+            status = "primary",
+            colour = "green",
+            key_var ="key")
+ 
